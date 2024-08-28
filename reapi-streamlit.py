@@ -6,6 +6,7 @@ from st_aggrid import GridOptionsBuilder, AgGrid, DataReturnMode, GridUpdateMode
 import plotly.express as px
 import pydeck as pdk
 import re
+
 # --- Constants ---
 API_KEY_STORAGE_KEY = "real_estate_api_key"
 USER_ID_STORAGE_KEY = "real_estate_user_id"
@@ -13,34 +14,56 @@ DEFAULT_USER_ID = "UniqueUserIdentifier"
 PAGE_SIZE = 50  # Number of results per page
 
 # --- Helper Functions ---
-if 'results' not in st.session_state:
-    st.session_state.results = None
-if 'total_pages' not in st.session_state:
-    st.session_state.total_pages = 0
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = 1
-if 'search_filter' not in st.session_state:
-    st.session_state.search_filter = {}
-if 'api_key' not in st.session_state:
-    st.session_state.api_key = ""
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = DEFAULT_USER_ID
-if 'zip_codes_input' not in st.session_state:
-    st.session_state.zip_codes_input = ''
 
 
 def get_page_of_properties(filter_params, result_index=0, page_size=PAGE_SIZE):
-@@ -66,8 +52,7 @@ def flatten_property_data(properties):
+    """Retrieves a single page of properties from the API."""
+    url = "https://api.realestateapi.com/v2/PropertySearch"
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "x-user-id": st.session_state.user_id,
+        "x-api-key": st.session_state.api_key,
+    }
+    payload = {
+        "count": False,
+        "size": page_size,
+        "resultIndex": result_index,
+        **filter_params,
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return data
+    except requests.RequestException as e:
+        st.error(f"API call failed: {str(e)}")
+        if hasattr(e, "response") and e.response is not None:
+            st.error(f"Response content: {e.response.text}")
+        return None
+
+
+def flatten_property_data(properties):
+    """Flattens the nested JSON structure of the property data."""
+    display_data = []
+    for prop in properties:
+        flattened_prop = {}
         for key, value in prop.items():
             if isinstance(value, dict):
                 flattened_prop.update(
-                    {f"{key}_{sub_key}": sub_value for sub_key,
-                        sub_value in value.items()}
                     {f"{key}_{sub_key}": sub_value for sub_key, sub_value in value.items()}
                 )
             else:
                 flattened_prop[key] = value
-@@ -82,50 +67,87 @@ def is_valid_zip_code(zip_code):
+        display_data.append(flattened_prop)
+    return display_data
+
+
+def is_valid_zip_code(zip_code):
+    """Checks if a zip code is valid (5 digits or 5+4 format)."""
+    return re.match(r"^\d{5}(-\d{4})?$", zip_code) is not None
+
 
 # --- Streamlit UI ---
 
@@ -49,7 +72,6 @@ def main():
     # --- Sidebar --- #
     st.sidebar.header("Search Parameters")
 
-    # API Configuration
     # Initialize zip_codes_input in session state if it doesn't exist
     if 'zip_codes_input' not in st.session_state:
         st.session_state['zip_codes_input'] = '' 
@@ -84,21 +106,16 @@ def main():
     api_key = st.sidebar.text_input(
         "Enter your API key",
         type="password",
-        value=st.session_state.api_key,
         value=st.session_state[API_KEY_STORAGE_KEY],
     )
     user_id = st.sidebar.text_input(
-        "Enter your User ID", value=st.session_state.user_id
         "Enter your User ID", value=st.session_state[USER_ID_STORAGE_KEY]
     )
     if st.sidebar.button("Save Credentials"):
-        st.session_state.api_key = api_key
-        st.session_state.user_id = user_id
         st.session_state[API_KEY_STORAGE_KEY] = api_key
         st.session_state[USER_ID_STORAGE_KEY] = user_id
         st.success("API Key and User ID saved!")
 
-    # Basic Search and API Options
     st.session_state.api_key = st.session_state.get(
         API_KEY_STORAGE_KEY, ""
     )  # Access the saved API Key
@@ -109,20 +126,10 @@ def main():
     # --- Search Parameters ---
     st.sidebar.header("Search Parameters")
 
-
     # Basic Search and API Options
     address = st.sidebar.text_input("Address")
     city = st.sidebar.text_input("City")
     state = st.sidebar.text_input("State")
-
-    # Zip Code Input with Multiple Values
-    zip_codes_input = st.sidebar.text_input("ZIP Codes (comma-separated)", value=st.session_state.zip_codes_input)
-    if zip_codes_input:
-        zip_code_list = [z.strip() for z in zip_codes_input.split(",") if is_valid_zip_code(z.strip())]
-        if zip_code_list:
-            st.session_state.search_filter["zips"] = zip_code_list
-
-    property_type = st.sidebar.selectbox("Property Type", ["", "Single Family", "Multi Family", "Condo", "Townhouse"])  # Example of fixed input
 
     # Zip Code Input with Multiple Values and Validation
     zip_codes_input = st.sidebar.text_input("ZIP Codes (comma-separated)")
@@ -134,12 +141,9 @@ def main():
     ids_only = st.sidebar.radio("IDs Only", ("", "True", "False"))
     obfuscate = st.sidebar.radio("Obfuscate", ("", "True", "False"))
     summary = st.sidebar.radio("Summary", ("", "True", "False"))
-    size = st.sidebar.number_input("Size", min_value=1, value=50, step=1, format="%.0f")
-    result_index = st.sidebar.number_input("Result Index", min_value=0, value=0, step=1, format="%.0f")
     size = st.sidebar.number_input("Size", min_value=1, value=50)
     result_index = st.sidebar.number_input("Result Index", min_value=0, value=0)
 
-    # Advanced Filtering
     # --- Advanced Filtering ---
     st.sidebar.header("Advanced Filters")
 
@@ -147,18 +151,43 @@ def main():
     with st.sidebar.expander("Property Characteristics"):
         absentee_owner = st.radio("Absentee Owner", ("", "True", "False"))
         adjustable_rate = st.radio("Adjustable Rate", ("", "True", "False"))
-@@ -158,7 +180,9 @@ def main():
+        assumable = st.radio("Assumable", ("", "True", "False"))
+        attic = st.radio("Attic", ("", "True", "False"))
+        auction = st.radio("Auction", ("", "True", "False"))
+        basement = st.radio("Basement", ("", "True", "False"))
+        breezeway = st.radio("Breezeway", ("", "True", "False"))
+        carport = st.radio("Carport", ("", "True", "False"))
+        cash_buyer = st.radio("Cash Buyer", ("", "True", "False"))
+        corporate_owned = st.radio("Corporate Owned", ("", "True", "False"))
+        death = st.radio("Death", ("", "True", "False"))
+        deck = st.radio("Deck", ("", "True", "False"))
+        equity = st.radio("Equity", ("", "True", "False"))
+        feature_balcony = st.radio("Feature Balcony", ("", "True", "False"))
+        fire_sprinklers = st.radio("Fire Sprinklers", ("", "True", "False"))
+        flood_zone = st.radio("Flood Zone", ("", "True", "False"))
+        foreclosure = st.radio("Foreclosure", ("", "True", "False"))
+        free_clear = st.radio("Free Clear", ("", "True", "False"))
+        garage = st.radio("Garage", ("", "True", "False"))
+        high_equity = st.radio("High Equity", ("", "True", "False"))
+        inherited = st.radio("Inherited", ("", "True", "False"))
+        in_state_owner = st.radio("In-State Owner", ("", "True", "False"))
+        investor_buyer = st.radio("Investor Buyer", ("", "True", "False"))
+        judgment = st.radio("Judgment", ("", "True", "False"))
+        mfh_2to4 = st.radio("MFH 2 to 4", ("", "True", "False"))
+        mfh_5plus = st.radio("MFH 5+", ("", "True", "False"))
+        negative_equity = st.radio("Negative Equity", ("", "True", "False"))
+        out_of_state_owner = st.radio("Out-of-State Owner", ("", "True", "False"))
         patio = st.radio("Patio", ("", "True", "False"))
         pool = st.radio("Pool", ("", "True", "False"))
         pre_foreclosure = st.radio("Pre-Foreclosure", ("", "True", "False"))
-        prior_owner_individual = st.radio("Prior Owner Individual", ("", "True", "False"))
         prior_owner_individual = st.radio(
             "Prior Owner Individual", ("", "True", "False")
         )
         private_lender = st.radio("Private Lender", ("", "True", "False"))
         quit_claim = st.radio("Quit Claim", ("", "True", "False"))
         reo = st.radio("REO", ("", "True", "False"))
-@@ -167,13 +191,22 @@ def main():
+        rv_parking = st.radio("RV Parking", ("", "True", "False"))
+        tax_lien = st.radio("Tax Lien", ("", "True", "False"))
         trust_owned = st.radio("Trust Owned", ("", "True", "False"))
         vacant = st.radio("Vacant", ("", "True", "False"))
 
@@ -167,9 +196,6 @@ def main():
         house = st.sidebar.text_input("House Number")
         street = st.sidebar.text_input("Street Name")
         county = st.sidebar.text_input("County")
-        latitude = st.sidebar.number_input("Latitude", format="%.5f")
-        longitude = st.sidebar.number_input("Longitude", format="%.5f")
-        radius = st.sidebar.slider("Radius (miles)", min_value=0.1, max_value=10.0, value=5.0, step=0.1, format="%.1f")
         latitude = st.sidebar.number_input("Latitude")
         longitude = st.sidebar.number_input("Longitude")
 
@@ -184,17 +210,18 @@ def main():
         property_use_code = st.sidebar.text_input("Property Use Code")
         census_block = st.sidebar.text_input("Census Block")
         census_block_group = st.sidebar.text_input("Census Block Group")
-@@ -187,228 +220,509 @@ def main():
+        census_tract = st.sidebar.text_input("Census Tract")
+        construction = st.sidebar.text_input("Construction")
+        document_type_code = st.sidebar.text_input("Document Type Code")
+        flood_zone_type = st.sidebar.text_input("Flood Zone Type")
+        loan_type_code_first = st.sidebar.text_input("Loan Type Code (First)")
+        loan_type_code_second = st.sidebar.text_input("Loan Type Code (Second)")
+        loan_type_code_third = st.sidebar.text_input("Loan Type Code (Third)")
         notice_type = st.sidebar.text_input("Notice Type")
         parcel_account_number = st.sidebar.text_input("Parcel Account Number")
         search_range = st.sidebar.text_input("Search Range")
-        sewage = st.sidebar.selectbox("Sewage", ["", "Municipal", "Yes", "Septic", "None", "Storm"])  # Example of fixed input
         sewage = st.sidebar.text_input("Sewage")
         water_source = st.sidebar.text_input("Water Source")
-        estimated_equity = st.sidebar.number_input("Estimated Equity", step=0.5, format="%.1f")
-        equity_operator = st.sidebar.selectbox("Equity Operator", ["", "lt", "lte", "gt", "gte"])
-        equity_percent = st.sidebar.slider("Equity Percent", min_value=0, max_value=100, value=50, step=5, format="%.0f")
-        equity_percent_operator = st.sidebar.selectbox("Equity Percent Operator", ["", "lt", "lte", "gt", "gte"])
         estimated_equity = st.sidebar.number_input("Estimated Equity")
         equity_operator = st.sidebar.selectbox(
             "Equity Operator", ["", "lt", "lte", "gt", "gte"]
@@ -212,12 +239,6 @@ def main():
             "Equity Percent Operator", ["", "lt", "lte", "gt", "gte"]
         )
         last_sale_date = st.sidebar.date_input("Last Sale Date")
-        last_sale_date_operator = st.sidebar.selectbox("Last Sale Date Operator", ["", "lt", "lte", "gt", "gte"])
-        median_income = st.sidebar.number_input("Median Income", step=500, format="%.0f")
-        median_income_operator = st.sidebar.selectbox("Median Income Operator", ["", "lt", "lte", "gt", "gte"])
-        years_owned = st.sidebar.number_input("Years Owned", step=0.5, format="%.1f")
-        years_owned_operator = st.sidebar.selectbox("Years Owned Operator", ["", "lt", "lte", "gt", "gte"])
-
         last_sale_date_operator = st.sidebar.selectbox(
             "Last Sale Date Operator", ["", "lt", "lte", "gt", "gte"]
         )
@@ -233,65 +254,6 @@ def main():
 
     # Numeric Range Filters
     with st.sidebar.expander("Numeric Range Filters"):
-        assessed_improvement_value_min = st.sidebar.number_input("Assessed Improvement Value (Min)", step=500, format="%.0f")
-        assessed_improvement_value_max = st.sidebar.number_input("Assessed Improvement Value (Max)", step=500, format="%.0f")
-        assessed_land_value_min = st.sidebar.number_input("Assessed Land Value (Min)", step=500, format="%.0f")
-        assessed_land_value_max = st.sidebar.number_input("Assessed Land Value (Max)", step=500, format="%.0f")
-        assessed_value_min = st.sidebar.number_input("Assessed Value (Min)", step=500, format="%.0f")
-        assessed_value_max = st.sidebar.number_input("Assessed Value (Max)", step=500, format="%.0f")
-        baths_min = st.sidebar.number_input("Baths (Min)", step=0.5, format="%.1f")
-        baths_max = st.sidebar.number_input("Baths (Max)", step=0.5, format="%.1f")
-        beds_min = st.sidebar.number_input("Beds (Min)", step=0.5, format="%.1f")
-        beds_max = st.sidebar.number_input("Beds (Max)", step=0.5, format="%.1f")
-        building_size_min = st.sidebar.number_input("Building Size (Min)", step=500, format="%.0f")
-        building_size_max = st.sidebar.number_input("Building Size (Max)", step=500, format="%.0f")
-        deck_area_min = st.sidebar.number_input("Deck Area (Min)", step=500, format="%.0f")
-        deck_area_max = st.sidebar.number_input("Deck Area (Max)", step=500, format="%.0f")
-        estimated_equity_min = st.sidebar.number_input("Estimated Equity (Min)", step=500, format="%.0f")
-        estimated_equity_max = st.sidebar.number_input("Estimated Equity (Max)", step=500, format="%.0f")
-        last_sale_price_min = st.sidebar.number_input("Last Sale Price (Min)", step=500, format="%.0f")
-        last_sale_price_max = st.sidebar.number_input("Last Sale Price (Max)", step=500, format="%.0f")
-        lot_size_min = st.sidebar.number_input("Lot Size (Min)", step=500, format="%.0f")
-        lot_size_max = st.sidebar.number_input("Lot Size (Max)", step=500, format="%.0f")
-        ltv_min = st.sidebar.slider("LTV (Min)", min_value=0, max_value=100, value=0, step=1, format="%.0f")
-        ltv_max = st.sidebar.slider("LTV (Max)", min_value=0, max_value=100, value=100, step=1, format="%.0f")
-        median_income_min = st.sidebar.number_input("Median Income (Min)", step=500, format="%.0f")
-        median_income_max = st.sidebar.number_input("Median Income (Max)", step=500, format="%.0f")
-        mortgage_min = st.sidebar.number_input("Mortgage (Min)", step=500, format="%.0f")
-        mortgage_max = st.sidebar.number_input("Mortgage (Max)", step=500, format="%.0f")
-        rooms_min = st.sidebar.number_input("Rooms (Min)", step=0.5, format="%.1f")
-        rooms_max = st.sidebar.number_input("Rooms (Max)", step=0.5, format="%.1f")
-        pool_area_min = st.sidebar.number_input("Pool Area (Min)", step=500, format="%.0f")
-        pool_area_max = st.sidebar.number_input("Pool Area (Max)", step=500, format="%.0f")
-        portfolio_equity_min = st.sidebar.number_input("Portfolio Equity (Min)", step=500, format="%.0f")
-        portfolio_equity_max = st.sidebar.number_input("Portfolio Equity (Max)", step=500, format="%.0f")
-        portfolio_mortgage_balance_min = st.sidebar.number_input("Portfolio Mortgage Balance (Min)", step=500, format="%.0f")
-        portfolio_mortgage_balance_max = st.sidebar.number_input("Portfolio Mortgage Balance (Max)", step=500, format="%.0f")
-        portfolio_purchased_last12_min = st.sidebar.number_input("Portfolio Purchased Last 12 Months (Min)", step=500, format="%.0f")
-        portfolio_purchased_last12_max = st.sidebar.number_input("Portfolio Purchased Last 12 Months (Max)", step=500, format="%.0f")
-        portfolio_purchased_last6_min = st.sidebar.number_input("Portfolio Purchased Last 6 Months (Min)", step=500, format="%.0f")
-        portfolio_purchased_last6_max = st.sidebar.number_input("Portfolio Purchased Last 6 Months (Max)", step=500, format="%.0f")
-        portfolio_value_min = st.sidebar.number_input("Portfolio Value (Min)", step=500, format="%.0f")
-        portfolio_value_max = st.sidebar.number_input("Portfolio Value (Max)", step=500, format="%.0f")
-        prior_owner_months_owned_min = st.sidebar.number_input("Prior Owner Months Owned (Min)", step=0.5, format="%.1f")
-        prior_owner_months_owned_max = st.sidebar.number_input("Prior Owner Months Owned (Max)", step=0.5, format="%.1f")
-        properties_owned_min = st.sidebar.number_input("Properties Owned (Min)", step=0.5, format="%.1f")
-        properties_owned_max = st.sidebar.number_input("Properties Owned (Max)", step=0.5, format="%.1f")
-        stories_min = st.sidebar.number_input("Stories (Min)", step=0.5, format="%.1f")
-        stories_max = st.sidebar.number_input("Stories (Max)", step=0.5, format="%.1f")
-        tax_delinquent_year_min = st.sidebar.number_input("Tax Delinquent Year (Min)", step=1, format="%.0f")
-        tax_delinquent_year_max = st.sidebar.number_input("Tax Delinquent Year (Max)", step=1, format="%.0f")
-        units_min = st.sidebar.number_input("Units (Min)", step=0.5, format="%.1f")
-        units_max = st.sidebar.number_input("Units (Max)", step=0.5, format="%.1f")
-        value_min = st.sidebar.number_input("Value (Min)", step=500, format="%.0f")
-        value_max = st.sidebar.number_input("Value (Max)", step=500, format="%.0f")
-        year_min = st.sidebar.number_input("Year (Min)", step=1, format="%.0f")
-        year_max = st.sidebar.number_input("Year (Max)", step=1, format="%.0f")
-        year_built_min = st.sidebar.number_input("Year Built (Min)", step=1, format="%.0f")
-        year_built_max = st.sidebar.number_input("Year Built (Max)", step=1, format="%.0f")
-        years_owned_min = st.sidebar.number_input("Years Owned (Min)", step=0.5, format="%.1f")
-        years_owned_max = st.sidebar.number_input("Years Owned (Max)", step=0.5, format="%.1f")
-
         assessed_improvement_value_min = st.sidebar.number_input(
             "Assessed Improvement Value (Min)"
         )
@@ -601,51 +563,6 @@ def main():
 
     # MLS Filters
     with st.sidebar.expander("MLS Filters"):
-        mls_days_on_market_min = st.sidebar.number_input("MLS Days on Market (Min)", step=1, format="%.0f")
-        mls_days_on_market_max = st.sidebar.number_input("MLS Days on Market (Max)", step=1, format="%.0f")
-        mls_listing_price_min = st.sidebar.number_input("MLS Listing Price (Min)", step=500, format="%.0f")
-        mls_listing_price_max = st.sidebar.number_input("MLS Listing Price (Max)", step=500, format="%.0f")
-        mls_listing_price = st.sidebar.number_input("MLS Listing Price", step=500, format="%.0f")
-        mls_listing_price_operator = st.sidebar.selectbox("MLS Listing Price Operator", ["", "lt", "lte", "gt", "gte"])
-
-    # Main Content
-    st.title("Real Estate Property Search")
-
-    if st.sidebar.button("Search"):
-        # Access params from session state
-        params = st.session_state.search_filter
-
-        # Add parameters to `params` based on user input
-        if count != "":
-            params["count"] = count == "True"  # Convert string to boolean
-        if ids_only != "":
-            params["ids_only"] = ids_only == "True"
-        if obfuscate != "":
-            params["obfuscate"] = obfuscate == "True"
-        if summary != "":
-            params["summary"] = summary == "True"
-        params["size"] = size
-        params["resultIndex"] = result_index
-
-        if address:
-            params["address"] = address
-        if city:
-            params["city"] = city
-        if state:
-            params["state"] = state
-        if property_type:
-            params["property_type"] = property_type
-        # ... (Add other parameters to params based on user input) ...
-
-        st.session_state.search_filter = params.copy()  # Store filter for later use
-
-        # Fetch initial page of results
-        data = get_page_of_properties(params)
-        if data:
-            st.session_state.results = flatten_property_data(data.get("data", []))
-            st.session_state.total_pages = (
-                data.get("resultCount", 0) // PAGE_SIZE
-                + (data.get("resultCount", 0) % PAGE_SIZE > 0)
         mls_days_on_market_min = st.sidebar.number_input("MLS Days on Market (Min)")
         if mls_days_on_market_min != 0:
             st.session_state.params["mls_days_on_market_min"] = mls_days_on_market_min
@@ -738,54 +655,6 @@ if st.sidebar.button("Search"):
                 use_checkbox=True,
                 groupSelectsChildren="Group checkbox select children",
             )
-            st.session_state.total_results = data.get("resultCount", 0)
-        else:
-            st.session_state.results = []
-
-    # Display Results
-    if st.session_state.results:
-        st.header("Search Results")
-
-        # Display total results and paging controls
-        total_results = st.session_state.total_results
-        st.write(f"Total Results: {total_results}")
-        if st.session_state.total_pages > 1:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.session_state.current_page > 1:
-                    if st.button("Previous Page"):
-                        st.session_state.current_page -= 1
-            with col2:
-                st.write(f"Page {st.session_state.current_page} of {st.session_state.total_pages}")
-            with col3:
-                if st.session_state.current_page < st.session_state.total_pages:
-                    if st.button("Next Page"):
-                        st.session_state.current_page += 1
-
-            # Fetch and display current page of results
-            result_index = (st.session_state.current_page - 1) * PAGE_SIZE
-            data = get_page_of_properties(st.session_state.search_filter, result_index)
-            if data:
-                current_page_results = flatten_property_data(data.get("data", []))
-                st.session_state.results = current_page_results
-
-        # Display results in a responsive table with filtering options using AgGrid
-        df = pd.DataFrame(st.session_state.results)
-        if not df.empty:
-            gb = GridOptionsBuilder.from_dataframe(df)
-            gb.configure_pagination(paginationAutoPageSize=True)  # Responsive Pagination
-            gb.configure_side_bar()  # Enable the sidebar with filters
-            gb.configure_default_column(groupable=True, value=True, enableRowGroup=True, aggFunc='sum', editable=True)  # Enable Pivoting but not by default
-            gb.configure_auto_height(True)  # Auto-size rows based on content
-            grid_options = gb.build()
-
-            AgGrid(
-                df,
-                gridOptions=grid_options,
-                data_return_mode=DataReturnMode.AS_INPUT,
-                update_mode=GridUpdateMode.MODEL_CHANGED,
-                fit_columns_on_grid_load=False,  # Allow columns to expand to screen size
-                theme='alpine',  # Updated to "alpine" theme
             gridOptions = gb.build()
 
             grid_response = AgGrid(
@@ -842,49 +711,6 @@ if st.sidebar.button("Search"):
                 "Choose a chart type:", ("Scatter Plot",
                                         "Bar Chart", "Histogram")
             )
-        else:
-            st.write("No data available to display in table format.")
-
-        # Display four relevant charts automatically
-        st.subheader("Automatic Data Visualizations")
-
-        if not df.empty:
-            # Example chart 1: Distribution of property types
-            if "property_type" in df.columns:
-                fig1 = px.histogram(df, x="property_type", title="Distribution of Property Types")
-                fig1.update_layout(autosize=True)  # Ensure chart expands to full width
-                st.plotly_chart(fig1, use_container_width=True)
-
-            # Example chart 2: Distribution of property values
-            if "estimated_value" in df.columns:
-                fig2 = px.histogram(df, x="estimated_value", title="Distribution of Property Values")
-                fig2.update_layout(autosize=True)
-                st.plotly_chart(fig2, use_container_width=True)
-
-            # Example chart 3: Scatter plot of property values by size
-            if "building_size_max" in df.columns and "estimated_value" in df.columns:
-                fig3 = px.scatter(df, x="building_size_max", y="estimated_value", title="Property Value vs. Building Size")
-                fig3.update_layout(autosize=True)
-                st.plotly_chart(fig3, use_container_width=True)
-
-            # Example chart 4: Pie chart of properties by foreclosure status
-            if "foreclosure" in df.columns:
-                foreclosure_counts = df["foreclosure"].value_counts().reset_index()
-                foreclosure_counts.columns = ["Foreclosure Status", "Count"]
-                fig4 = px.pie(foreclosure_counts, names="Foreclosure Status", values="Count", title="Foreclosure Status Distribution")
-                fig4.update_layout(autosize=True)
-                st.plotly_chart(fig4, use_container_width=True)
-
-    # If no search has been performed yet
-    elif st.session_state.api_key and st.session_state.user_id:
-        st.info("Enter search criteria in the sidebar and click 'Search'.")
-
-    else:
-        st.warning("Please configure your API key and User ID in the sidebar.")
-
-
-if __name__ == "__main__":
-    main()
             if chart_type == "Scatter Plot":
                 x_axis = st.selectbox(
                     "X-axis", list(current_page_results[0].keys()))
@@ -899,4 +725,4 @@ if __name__ == "__main__":
 elif st.session_state.api_key and st.session_state.user_id:
     st.info("Enter search criteria in the sidebar and click 'Search'.")
 else:
-    st.warning("Please configure your API key and User ID in the side
+    st.warning("Please configure your API key and User ID in the sidebar.")
