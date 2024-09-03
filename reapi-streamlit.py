@@ -29,14 +29,19 @@ def get_page_of_properties(filter_params, result_index=0, page_size=PAGE_SIZE):
         "count": False,
         "size": page_size,
         "resultIndex": result_index,
-        **filter_params,
+        **filter_params
     }
 
     try:
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
+<<<<<<< Updated upstream
         data = response.json()
         return data
+=======
+        print("API Response:", response.json())
+        return response.json()
+>>>>>>> Stashed changes
     except requests.RequestException as e:
         st.error(f"API call failed: {str(e)}")
         if hasattr(e, "response") and e.response is not None:
@@ -71,6 +76,12 @@ def is_valid_zip_code(zip_code):
 def main():
     # --- Sidebar --- #
     st.sidebar.header("Search Parameters")
+<<<<<<< Updated upstream
+=======
+
+    # Move the Search button to the top
+    search_clicked = st.sidebar.button("Search")
+>>>>>>> Stashed changes
 
     # Initialize zip_codes_input in session state if it doesn't exist
     if 'zip_codes_input' not in st.session_state:
@@ -130,6 +141,16 @@ def main():
     address = st.sidebar.text_input("Address")
     city = st.sidebar.text_input("City")
     state = st.sidebar.text_input("State")
+<<<<<<< Updated upstream
+=======
+
+    # Zip Code Input with Multiple Values
+    zip_codes_input = st.sidebar.text_input("ZIP Codes (comma-separated)", value=st.session_state.zip_codes_input)
+    if zip_codes_input:
+        zip_code_list = [z.strip() for z in zip_codes_input.split(",") if is_valid_zip_code(z.strip())]
+        if zip_code_list:
+            st.session_state.search_filter["zip"] = zip_code_list
+>>>>>>> Stashed changes
 
     # Zip Code Input with Multiple Values and Validation
     zip_codes_input = st.sidebar.text_input("ZIP Codes (comma-separated)")
@@ -590,6 +611,7 @@ def main():
 # --- Main Content ---
 st.title("Real Estate Property Search")
 
+<<<<<<< Updated upstream
 if st.sidebar.button("Search"):
     # Access params from session state
     params = st.session_state.params
@@ -649,6 +671,27 @@ if st.sidebar.button("Search"):
             gb.configure_pagination(
                 paginationAutoPageSize=True, paginationPageSize=10
             )
+=======
+        # Add all other parameters similarly based on user input
+        if address:
+            params["address"] = address
+        if city:
+            params["city"] = city
+        if state:
+            params["state"] = state
+        if property_type:
+            params["propertyType"] = property_type
+
+        # FETCH THE DATA HERE!
+        results = fetch_all_properties(params)
+        if results:
+            st.session_state.results = flatten_property_data(results)
+
+            # Display results in a responsive table with filtering options using AgGrid
+            df = pd.DataFrame(st.session_state.results)
+            gb = GridOptionsBuilder.from_dataframe(df)
+            gb.configure_pagination(paginationAutoPageSize=True)
+>>>>>>> Stashed changes
             gb.configure_side_bar()
             gb.configure_selection(
                 selection_mode="single",
@@ -665,9 +708,15 @@ if st.sidebar.button("Search"):
                 fit_columns_on_grid_load=False,
                 theme="dark",  # Enable dark mode
                 enable_enterprise_modules=True,
+<<<<<<< Updated upstream
                 height=350,
                 width="100%",
                 reload_data=True,
+=======
+                height=400,
+                width='100%',
+                reload_data=True
+>>>>>>> Stashed changes
             )
             data = grid_response["data"]
             selected = grid_response["selected_rows"]
